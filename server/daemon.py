@@ -13,6 +13,7 @@ import json
 import time
 import traceback
 from calendar import timegm
+from concurrent.futures import ProcessPoolExecutor
 from struct import pack
 from time import strptime
 
@@ -34,9 +35,10 @@ class Daemon(LoggedClass):
     class DaemonWarmingUpError(Exception):
         '''Raised when the daemon returns an error in its results.'''
 
-    def __init__(self, env):
+    def __init__(self, env, loop):
         super().__init__()
         self.coin = env.coin
+        self.loop = loop
         self.set_urls(env.coin.daemon_urls(env.daemon_url))
         self._height = None
         self._mempool_hashes = set()
@@ -54,6 +56,13 @@ class Daemon(LoggedClass):
         else:
             self.ClientHttpProcessingError = asyncio.TimeoutError
             self.ClientPayloadError = aiohttp.ClientPayloadError
+
+        self.smp_executor = ProcessPoolExecutor()
+
+    async def parallel_json_loads(self, *args):
+        return await self.loop.run_in_executor(
+            self.smp_executor, json.loads, *args
+        )
 
     def next_req_id(self):
         '''Retrns the next request ID.'''
@@ -98,7 +107,7 @@ class Daemon(LoggedClass):
                     # it returns 500 but fills out the JSON.
                     # Should still return 200 IMO.
                     if resp.status in (200, 500):
-                        return await resp.json()
+                        return await resp.json(loads=self.parallel_json_loads)
                     return (resp.status, resp.reason)
 
     async def _send(self, payload, processor):
@@ -124,7 +133,8 @@ class Daemon(LoggedClass):
         max_secs = 4
         while True:
             try:
-                result = await self._send_data(data)
+                result_future = await self._send_data(data)
+                result = await result_future
                 if not isinstance(result, tuple):
                     result = processor(result)
                     if self.down:
