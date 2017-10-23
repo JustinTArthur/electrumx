@@ -14,6 +14,7 @@ import asyncio
 from struct import pack, unpack
 import time
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 
 from server.daemon import DaemonError
@@ -147,6 +148,8 @@ class BlockProcessor(server.db.DB):
         # restarting it will corrupt the history
         self.cancel_history_compaction()
 
+        self.deserial_executor = ProcessPoolExecutor()
+
         self.daemon = daemon
         self.controller = controller
 
@@ -239,8 +242,10 @@ class BlockProcessor(server.db.DB):
                                                         self.height + 1))
             return
 
-        blocks = [self.coin.block(raw_block, first + n)
-                  for n, raw_block in enumerate(raw_blocks)]
+        #blocks = [self.coin.block(raw_block, first + n)
+        #          for n, raw_block in enumerate(raw_blocks)]
+        block_params = [(raw_block, first + n) for n, raw_block in enumerate(raw_blocks)]
+        blocks = list(self.deserial_executor.map(self.coin.block, *zip(*block_params), chunksize=10))
         headers = [block.header for block in blocks]
         hprevs = [self.coin.header_prevhash(h) for h in headers]
         chain = [self.tip] + [self.coin.header_hash(h) for h in headers[:-1]]
