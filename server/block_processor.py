@@ -16,6 +16,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
+import itertools
 
 from server.daemon import DaemonError
 from server.version import VERSION
@@ -228,6 +229,27 @@ class BlockProcessor(server.db.DB):
         self.open_dbs()
         self.caught_up_event.set()
 
+    def process_chunk(self, fn, chunk):
+        return [fn(*args) for args in chunk]
+
+    async def parse_blocks_parallel(self, raw_blocks, first, chunksize=10):
+        tasks = []
+        it = ((raw_block, first + n) for n, raw_block in enumerate(raw_blocks))
+        while True:
+            chunk = tuple(itertools.islice(it, chunksize))
+            if not chunk:
+                break
+            task = self.controller.loop.run_in_executor(
+                self.deserial_executor,
+                self.process_chunk,
+                self.coin.block,
+                chunk
+            )
+            tasks.append(task)
+
+        chunks = await asyncio.gather(*tasks)
+        return tuple(itertools.chain.from_iterable(chunks))
+
     async def check_and_advance_blocks(self, raw_blocks, first):
         '''Process the list of raw blocks passed.  Detects and handles
         reorgs.
@@ -244,8 +266,7 @@ class BlockProcessor(server.db.DB):
 
         #blocks = [self.coin.block(raw_block, first + n)
         #          for n, raw_block in enumerate(raw_blocks)]
-        block_params = [(raw_block, first + n) for n, raw_block in enumerate(raw_blocks)]
-        blocks = list(self.deserial_executor.map(self.coin.block, *zip(*block_params), chunksize=10))
+        blocks = await self.parse_blocks_parallel(raw_blocks, first)
         headers = [block.header for block in blocks]
         hprevs = [self.coin.header_prevhash(h) for h in headers]
         chain = [self.tip] + [self.coin.header_hash(h) for h in headers[:-1]]
