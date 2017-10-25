@@ -111,6 +111,16 @@ def test_chunks():
     assert list(util.chunks([1, 2, 3, 4, 5], 2)) == [[1, 2], [3, 4], [5]]
 
 
+def test_process_chunk():
+    results = []
+
+    def processor(*args):
+        results.append(sum(args))
+
+    util.process_chunk(processor, [[1, 2], [3, 4], [5]])
+    assert results == [3, 7, 5]
+
+
 def test_increment_byte_string():
     assert util.increment_byte_string(b'1') == b'2'
     assert util.increment_byte_string(b'\x01\x01') == b'\x01\x02'

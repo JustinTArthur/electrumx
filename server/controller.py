@@ -6,6 +6,7 @@
 # and warranty status of this software.
 
 import asyncio
+import itertools
 import json
 import os
 import ssl
@@ -13,7 +14,7 @@ import time
 import traceback
 from bisect import bisect_left
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from functools import partial
 
 import pylru
@@ -55,6 +56,14 @@ class Controller(ServerBase):
         self.low_watermark = self.max_sessions * 19 // 20
         self.max_subs = env.max_subs
         self.futures = {}
+        max_processes = env.max_processes or os.cpu_count() or 1
+        self.max_subprocesses = max_processes - 1
+        self.multi_process = max_processes > 1
+        if self.multi_process:
+            self.logger.info('multiprocessing with up to {:,d} total processes'
+                             .format(max_processes))
+        else:
+            self.logger.info('multiprocessing disabled')
         # Cache some idea of room to avoid recounting on each subscription
         self.subs_room = 0
         self.next_stale_check = 0
@@ -70,6 +79,8 @@ class Controller(ServerBase):
 
         self.loop = asyncio.get_event_loop()
         self.executor = ThreadPoolExecutor()
+        self.subprocess_executor = \
+            ProcessPoolExecutor(max_workers=self.max_subprocesses)
         self.loop.set_default_executor(self.executor)
 
         # The complex objects.  Note PeerManager references self.loop (ugh)
@@ -155,6 +166,39 @@ class Controller(ServerBase):
     async def run_in_executor(self, func, *args):
         '''Wait whilst running func in the executor.'''
         return await self.loop.run_in_executor(None, func, *args)
+
+    async def run_in_subprocess(self, func, *args):
+        '''Wait whilst running func in the process pool executor.'''
+        return await self.loop.run_in_executor(self.subprocess_executor,
+                                               func, *args)
+
+    async def map_in_subprocess(self, func, *iterables, chunksize=1):
+            it = zip(*iterables)
+            chunks = []
+            add_work = chunks.append
+            process_chunk = util.process_chunk
+            while True:
+                chunk = tuple(itertools.islice(it, chunksize))
+                if not chunk:
+                    break
+                task = self.run_in_subprocess(process_chunk, func, chunk)
+                add_work(task)
+            processed = await asyncio.gather(*chunks)
+            return itertools.chain.from_iterable(processed)
+
+    async def starmap_in_subprocess(self, func, args, chunksize=1):
+            it = iter(args)
+            chunks = []
+            add_work = chunks.append
+            process_chunk = util.process_chunk
+            while True:
+                chunk = tuple(itertools.islice(it, chunksize))
+                if not chunk:
+                    break
+                task = self.run_in_subprocess(process_chunk, func, chunk)
+                add_work(task)
+            processed = await asyncio.gather(*chunks)
+            return itertools.chain.from_iterable(processed)
 
     def schedule_executor(self, func, *args):
         '''Schedule running func in the executor, return a task.'''

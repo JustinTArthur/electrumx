@@ -37,6 +37,7 @@ class Env(EnvBase):
         self.coin = Coin.lookup_coin_class(coin_name, network)
         self.cache_MB = self.integer('CACHE_MB', 1200)
         self.host = self.default('HOST', 'localhost')
+        self.max_processes = self.integer('MAX_PROCESSES', None)
         self.reorg_limit = self.integer('REORG_LIMIT', self.coin.REORG_LIMIT)
         # Server stuff
         self.tcp_port = self.integer('TCP_PORT', None)
