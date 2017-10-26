@@ -172,33 +172,18 @@ class Controller(ServerBase):
         return await self.loop.run_in_executor(self.subprocess_executor,
                                                func, *args)
 
-    async def map_in_subprocess(self, func, *iterables, chunksize=1):
-            it = zip(*iterables)
-            chunks = []
-            add_work = chunks.append
-            process_chunk = util.process_chunk
-            while True:
-                chunk = tuple(itertools.islice(it, chunksize))
-                if not chunk:
-                    break
-                task = self.run_in_subprocess(process_chunk, func, chunk)
-                add_work(task)
-            processed = await asyncio.gather(*chunks)
-            return itertools.chain.from_iterable(processed)
-
-    async def starmap_in_subprocess(self, func, args, chunksize=1):
-            it = iter(args)
-            chunks = []
-            add_work = chunks.append
-            process_chunk = util.process_chunk
-            while True:
-                chunk = tuple(itertools.islice(it, chunksize))
-                if not chunk:
-                    break
-                task = self.run_in_subprocess(process_chunk, func, chunk)
-                add_work(task)
-            processed = await asyncio.gather(*chunks)
-            return itertools.chain.from_iterable(processed)
+    async def map_in_subprocesses(self, func, args, chunksize=1):
+        """Similar to starmap, but in the asyncio event loop. Returns an
+        iterator over the results in the order of the args iterables.
+        """
+        process_chunk = util.process_chunk
+        chunks = util.chunks(args, chunksize)
+        tasks = [
+            self.run_in_subprocess(process_chunk, func, chunk)
+            for chunk in chunks
+        ]
+        processed = await asyncio.gather(*tasks)
+        return itertools.chain.from_iterable(processed)
 
     def schedule_executor(self, func, *args):
         '''Schedule running func in the executor, return a task.'''

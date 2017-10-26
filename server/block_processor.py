@@ -180,10 +180,10 @@ class BlockProcessor(server.db.DB):
 
         # Run bulk CPU-intensive tasks in sub-processes
         if self.controller.multi_process:
-            self.ideal_blocks_chunksize = \
-                500 // self.controller.max_subprocesses
-            self.check_and_advance_blocks = \
-                self._check_and_advance_blocks_multi
+            self.check_and_advance_blocks = self._check_and_advance_blocks_mult
+            # Guess a good size to split block work into based on how many
+            # blocks we typically advance at once and the number of workers
+            self.blocks_chunksize = 500 // self.controller.max_subprocesses
         else:
             self.check_and_advance_blocks = self._check_and_advance_blocks
 
@@ -274,7 +274,7 @@ class BlockProcessor(server.db.DB):
                                 'resetting the prefetcher')
             await self.prefetcher.reset_height()
 
-    async def _check_and_advance_blocks_multi(self, raw_blocks, first):
+    async def _check_and_advance_blocks_mult(self, raw_blocks, first):
         '''Process the list of raw blocks passed.  Detects and handles
         reorgs.
         '''
@@ -288,18 +288,18 @@ class BlockProcessor(server.db.DB):
                                                         self.height + 1))
             return
 
-        blocks = await self.controller.starmap_in_subprocess(
+        blocks = await self.controller.map_in_subprocesses(
             self.coin.block,
             [(raw_block, first + n) for n, raw_block in enumerate(raw_blocks)],
-            chunksize=self.ideal_blocks_chunksize
+            chunksize=self.blocks_chunksize
         )
         blocks = tuple(blocks)
         headers = [block.header for block in blocks]
         hprevs = [self.coin.header_prevhash(h) for h in headers]
-        header_hashes = await self.controller.map_in_subprocess(
+        header_hashes = await self.controller.map_in_subprocesses(
             self.coin.header_hash,
-            headers[:-1],
-            chunksize=self.ideal_blocks_chunksize
+            tuple(zip(headers[:-1])),
+            chunksize=self.blocks_chunksize
         )
         chain = [self.tip] + list(header_hashes)
 
