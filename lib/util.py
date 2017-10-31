@@ -270,7 +270,6 @@ def is_valid_hostname(hostname):
         hostname = hostname[:-1]
     return all(SEGMENT_REGEX.match(x) for x in hostname.split("."))
 
-
 def protocol_tuple(s):
     '''Converts a protocol version number, such as "1.0" to a tuple (1, 0).
 

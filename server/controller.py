@@ -6,7 +6,6 @@
 # and warranty status of this software.
 
 import asyncio
-import itertools
 import json
 import os
 import ssl
