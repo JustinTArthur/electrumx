@@ -117,8 +117,11 @@ class Controller(ServerBase):
         while not all(future.done() for future in self.futures):
             await asyncio.sleep(0.1)
 
-        # Finally shut down the block processor and executor
+        # Shut down the block processor and executor
         self.bp.shutdown(self.executor)
+
+        # Shut down any sub-processes still running
+        self.subprocess_executor.shutdown()
 
     async def mempool_transactions(self, hashX):
         '''Generate (hex_hash, tx_fee, unconfirmed) tuples for mempool
@@ -171,19 +174,6 @@ class Controller(ServerBase):
         '''Wait whilst running func in the process pool executor.'''
         return await self.loop.run_in_executor(self.subprocess_executor,
                                                func, *args)
-
-    async def map_in_subprocesses(self, func, args, chunksize=1):
-        """Similar to starmap, but in the asyncio event loop. Returns an
-        iterator over the results in the order of the args iterables.
-        """
-        process_chunk = util.process_chunk
-        chunks = util.chunks(args, chunksize)
-        tasks = [
-            self.run_in_subprocess(process_chunk, func, chunk)
-            for chunk in chunks
-        ]
-        processed = await asyncio.gather(*tasks)
-        return itertools.chain.from_iterable(processed)
 
     def schedule_executor(self, func, *args):
         '''Schedule running func in the executor, return a task.'''

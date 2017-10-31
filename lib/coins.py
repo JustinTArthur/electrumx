@@ -278,6 +278,15 @@ class Coin(object):
         return Block(raw_block, header, txs)
 
     @classmethod
+    def blocks_and_hashes(cls, raw_blocks, first):
+        blocks = [cls.block(raw_block, n)
+                  for n, raw_block in enumerate(raw_blocks, first)]
+        headers = [block.header for block in blocks]
+        hprevs = [cls.header_prevhash(h) for h in headers]
+        hashes = [cls.header_hash(h) for h in headers]
+        return blocks, hprevs, hashes
+
+    @classmethod
     def decimal_value(cls, value):
         '''Return the number of standard coin units as a Decimal given a
         quantity of smallest units.

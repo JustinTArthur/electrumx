@@ -147,18 +147,6 @@ def chunks(items, size):
         yield items[i: i + size]
 
 
-def process_chunk(fn, chunk):
-    """
-    Runs a function for every arguments sequence in chunk. A call to this can
-    can be pickled and sent to a multiprocessing Process. It makes sending a
-    chunk of work and unpickling the results of the work easy.
-
-    Based on CPython's concurrent.futures.process._process_chunk
-    by Dan O'Reilly
-    """
-    return [fn(*args) for args in chunk]
-
-
 def bytes_to_int(be_bytes):
     '''Interprets a big-endian sequence of bytes as an integer'''
     return int.from_bytes(be_bytes, 'big')
