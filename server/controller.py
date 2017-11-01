@@ -78,8 +78,11 @@ class Controller(ServerBase):
 
         self.loop = asyncio.get_event_loop()
         self.executor = ThreadPoolExecutor()
-        self.subprocess_executor = \
-            ProcessPoolExecutor(max_workers=self.max_subprocesses)
+        if self.multi_process:
+            self.subprocess_executor = \
+                ProcessPoolExecutor(max_workers=self.max_subprocesses)
+        else:
+            self.subprocess_executor = None
         self.loop.set_default_executor(self.executor)
 
         # The complex objects.  Note PeerManager references self.loop (ugh)
