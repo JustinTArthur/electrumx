@@ -120,6 +120,9 @@ class Controller(ServerBase):
             # height.  Do this before entering the task group.
             await daemon.height()
 
+            # If the daemon offers multiple APIs, chose the optimal ones.
+            await daemon.optimize_apis()
+
             caught_up_event = Event()
             mempool_event = Event()
 

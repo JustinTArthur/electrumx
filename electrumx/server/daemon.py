@@ -16,7 +16,7 @@ from calendar import timegm
 from struct import pack
 
 import aiohttp
-from aiorpcx import JSONRPC
+from aiorpcx import JSONRPC, TaskGroup
 
 from electrumx.lib.util import hex_to_bytes, class_logger,\
     unpack_le_uint16_from, pack_varint
@@ -58,6 +58,11 @@ class Daemon(object):
         self.available_rpcs = {}
         self.session = None
 
+        # Daemon API Calls With Multiple Implementations:
+        self.deserialised_block = self._deserialised_block_rpc
+        self.block_hex_hashes = self._block_hex_hashes_rpc
+        self.raw_blocks = self._raw_blocks_rpc
+
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(connector=self.connector())
         return self
@@ -89,6 +94,12 @@ class Daemon(object):
         url = url or self.current_url()
         return url[url.rindex('@') + 1:]
 
+    async def optimize_apis(self):
+        # TODO check for REST capability.
+        self.block_hex_hashes = self._block_hex_hashes_rest
+        self.deserialised_block = self._deserialised_block_rest
+        self.raw_blocks = self._raw_blocks_rest
+
     def failover(self):
         '''Call to fail-over to the next daemon URL.
 
@@ -100,7 +111,53 @@ class Daemon(object):
             return True
         return False
 
-    async def _send_data(self, data):
+    async def _get_data_resource(self, resource_path, format='bin'):
+        '''Makes a REST call and returns a bytes response.'''
+        def log_error(error):
+            nonlocal last_error_log, retry
+            now = time.time()
+            if now - last_error_log > 60:
+                last_error_log = now
+                self.logger.error(f'{error}.  Retrying occasionally...')
+            if retry == self.max_retry and self.failover():
+                retry = 0
+
+        on_good_message = None
+        last_error_log = 0
+        retry = self.init_retry
+
+        try:
+            result = await self._get_data_resource_request(resource_path, format)
+            return result
+        except asyncio.TimeoutError:
+            log_error('timeout error')
+        except aiohttp.ServerDisconnectedError:
+            log_error('disconnected')
+            on_good_message = 'connection restored'
+        except ConnectionResetError:
+            log_error('connection reset')
+            on_good_message = 'connection restored'
+        except aiohttp.ClientConnectionError:
+            log_error('connection problem - check your daemon is running')
+            on_good_message = 'connection restored'
+        except aiohttp.ClientError as e:
+            log_error(f'daemon error: {e}')
+            on_good_message = 'running normally'
+
+    async def _get_data_resource_request(self, resource_path, format):
+        async with self.workqueue_semaphore:
+            async with self.session.get(
+                f'{self.current_url()}rest/{resource_path}.{format}'
+            ) as resp:
+                if format == 'bin':
+                    return await resp.read()
+                if format == 'json':
+                    return await resp.json()
+                if format == 'hex':
+                    content = await resp.text()
+                    return content.strip()
+
+    async def _send_rpc_data(self, data):
         async with self.workqueue_semaphore:
             async with self.session.post(self.current_url(), data=data) as resp:
                 kind = resp.headers.get('Content-Type', None)
@@ -110,7 +167,7 @@ class Daemon(object):
                 text = text.strip() or resp.reason
                 raise ServiceRefusedError(text)
 
-    async def _send(self, payload, processor):
+    async def _send_rpc(self, payload, processor):
         '''Send a payload to be converted to JSON.
 
         Handles temporary connection issues.  Daemon reponse errors
@@ -131,7 +188,7 @@ class Daemon(object):
         retry = self.init_retry
         while True:
             try:
-                result = await self._send_data(data)
+                result = await self._send_rpc_data(data)
                 result = processor(result)
                 if on_good_message:
                     self.logger.info(on_good_message)
@@ -160,7 +217,7 @@ class Daemon(object):
             await asyncio.sleep(retry)
             retry = max(min(self.max_retry, retry * 2), self.init_retry)
 
-    async def _send_single(self, method, params=None):
+    async def _send_rpc_single(self, method, params=None):
         '''Send a single request to the daemon.'''
         def processor(result):
             err = result['error']
@@ -173,9 +230,9 @@ class Daemon(object):
         payload = {'method': method, 'id': next(self.id_counter)}
         if params:
             payload['params'] = params
-        return await self._send(payload, processor)
+        return await self._send_rpc(payload, processor)
 
-    async def _send_vector(self, method, params_iterable, replace_errs=False):
+    async def _send_rpc_vector(self, method, params_iterable, replace_errs=False):
         '''Send several requests of the same method.
 
         The result will be an array of the same length as params_iterable.
@@ -192,7 +249,7 @@ class Daemon(object):
         payload = [{'method': method, 'params': p, 'id': next(self.id_counter)}
                    for p in params_iterable]
         if payload:
-            return await self._send(payload, processor)
+            return await self._send_rpc(payload, processor)
         return []
 
     async def _is_rpc_available(self, method):
@@ -204,7 +261,7 @@ class Daemon(object):
         if available is None:
             available = True
             try:
-                await self._send_single(method)
+                await self._send_rpc_single(method)
             except DaemonError as e:
                 err = e.args[0]
                 error_code = err.get("code")
@@ -212,25 +269,53 @@ class Daemon(object):
             self.available_rpcs[method] = available
         return available
 
-    async def block_hex_hashes(self, first, count):
+    async def _block_hex_hashes_rest(self, first, count):
+        '''Return the hex hashes of count block starting at height first.'''
+        tasks = []
+        async with TaskGroup() as group:
+            for height in range(first, first + count):
+                tasks.append(
+                    await group.spawn(
+                        self._get_data_resource,
+                        f'blockhashbyheight/{height}',
+                        'hex'
+                    )
+                )
+        return [task.result() for task in tasks]
+
+    async def _block_hex_hashes_rpc(self, first, count):
         '''Return the hex hashes of count block starting at height first.'''
         params_iterable = ((h, ) for h in range(first, first + count))
-        return await self._send_vector('getblockhash', params_iterable)
+        return await self._send_rpc_vector('getblockhash', params_iterable)
 
-    async def deserialised_block(self, hex_hash):
+    async def _deserialised_block_rest(self, hex_hash):
         '''Return the deserialised block with the given hex hash.'''
-        return await self._send_single('getblock', (hex_hash, True))
+        return await self._get_data_resource(f'block/{hex_hash}', 'hex')
 
-    async def raw_blocks(self, hex_hashes):
+    async def _deserialised_block_rpc(self, hex_hash):
+        '''Return the deserialised block with the given hex hash.'''
+        return await self._send_rpc_single('getblock', (hex_hash, True))
+
+    async def _raw_blocks_rest(self, hex_hashes):
+        '''Return the raw binary blocks with the given hex hashes.'''
+        tasks = []
+        async with TaskGroup() as group:
+            for hash in hex_hashes:
+                tasks.append(
+                    await group.spawn(self._get_data_resource, f'block/{hash}')
+                )
+        return [task.result() for task in tasks]
+
+    async def _raw_blocks_rpc(self, hex_hashes):
         '''Return the raw binary blocks with the given hex hashes.'''
         params_iterable = ((h, False) for h in hex_hashes)
-        blocks = await self._send_vector('getblock', params_iterable)
+        blocks = await self._send_rpc_vector('getblock', params_iterable)
         # Convert hex string to bytes
         return [hex_to_bytes(block) for block in blocks]
 
     async def mempool_hashes(self):
         '''Update our record of the daemon's mempool hashes.'''
-        return await self._send_single('getrawmempool')
+        return await self._send_rpc_single('getrawmempool')
 
     async def estimatefee(self, block_count, estimate_mode=None):
         '''Return the fee estimate for the block count.  Units are whole
@@ -242,13 +327,13 @@ class Daemon(object):
         else:
             args = (block_count, )
         if await self._is_rpc_available('estimatesmartfee'):
-            estimate = await self._send_single('estimatesmartfee', args)
+            estimate = await self._send_rpc_single('estimatesmartfee', args)
             return estimate.get('feerate', -1)
-        return await self._send_single('estimatefee', args)
+        return await self._send_rpc_single('estimatefee', args)
 
     async def getnetworkinfo(self):
         '''Return the result of the 'getnetworkinfo' RPC call.'''
-        return await self._send_single('getnetworkinfo')
+        return await self._send_rpc_single('getnetworkinfo')
 
     async def relayfee(self):
         '''The minimum fee a low-priority tx must pay in order to be accepted
@@ -259,26 +344,26 @@ class Daemon(object):
     async def getrawtransaction(self, hex_hash, verbose=False):
         '''Return the serialized raw transaction with the given hash.'''
         # Cast to int because some coin daemons are old and require it
-        return await self._send_single('getrawtransaction',
-                                       (hex_hash, int(verbose)))
+        return await self._send_rpc_single('getrawtransaction',
+                                           (hex_hash, int(verbose)))
 
     async def getrawtransactions(self, hex_hashes, replace_errs=True):
         '''Return the serialized raw transactions with the given hashes.
 
         Replaces errors with None by default.'''
         params_iterable = ((hex_hash, 0) for hex_hash in hex_hashes)
-        txs = await self._send_vector('getrawtransaction', params_iterable,
-                                      replace_errs=replace_errs)
+        txs = await self._send_rpc_vector('getrawtransaction', params_iterable,
+                                          replace_errs=replace_errs)
         # Convert hex strings to bytes
         return [hex_to_bytes(tx) if tx else None for tx in txs]
 
     async def broadcast_transaction(self, raw_tx):
         '''Broadcast a transaction to the network.'''
-        return await self._send_single('sendrawtransaction', (raw_tx, ))
+        return await self._send_rpc_single('sendrawtransaction', (raw_tx,))
 
     async def height(self):
         '''Query the daemon for its current height.'''
-        self._height = await self._send_single('getblockcount')
+        self._height = await self._send_rpc_single('getblockcount')
         return self._height
 
     def cached_height(self):
@@ -292,15 +377,15 @@ class DashDaemon(Daemon):
 
     async def masternode_broadcast(self, params):
         '''Broadcast a transaction to the network.'''
-        return await self._send_single('masternodebroadcast', params)
+        return await self._send_rpc_single('masternodebroadcast', params)
 
     async def masternode_list(self, params):
         '''Return the masternode status.'''
-        return await self._send_single('masternodelist', params)
+        return await self._send_rpc_single('masternodelist', params)
 
     async def protx(self, params):
         '''Set of commands to execute ProTx related actions.'''
-        return await self._send_single('protx', params)
+        return await self._send_rpc_single('protx', params)
 
 
 class FakeEstimateFeeDaemon(Daemon):
@@ -329,7 +414,7 @@ class LegacyRPCDaemon(Daemon):
     async def raw_blocks(self, hex_hashes):
         '''Return the raw binary blocks with the given hex hashes.'''
         params_iterable = ((h, ) for h in hex_hashes)
-        block_info = await self._send_vector('getblock', params_iterable)
+        block_info = await self._send_rpc_vector('getblock', params_iterable)
 
         blocks = []
         for i in block_info:
@@ -386,7 +471,7 @@ class DecredDaemon(Daemon):
         '''Return the raw binary blocks with the given hex hashes.'''
 
         params_iterable = ((h, False) for h in hex_hashes)
-        blocks = await self._send_vector('getblock', params_iterable)
+        blocks = await self._send_rpc_vector('getblock', params_iterable)
 
         raw_blocks = []
         valid_tx_tree = {}
@@ -405,12 +490,12 @@ class DecredDaemon(Daemon):
                 is_valid = valid_tx_tree[hash]
             else:
                 # Do something complicated to figure out if this block is valid
-                header = await self._send_single('getblockheader', (hash, ))
+                header = await self._send_rpc_single('getblockheader', (hash,))
                 if 'nextblockhash' not in header:
                     raise DaemonError(f'Could not find next block for {hash}')
                 next_hash = header['nextblockhash']
-                next_header = await self._send_single('getblockheader',
-                                                      (next_hash, ))
+                next_header = await self._send_rpc_single('getblockheader',
+                                                          (next_hash, ))
                 is_valid = self.is_valid_tx_tree(next_header['votebits'])
 
             if is_valid:
@@ -450,8 +535,8 @@ class DecredDaemon(Daemon):
     async def mempool_hashes(self):
         mempool = await super().mempool_hashes()
         # Add current tip transactions to the 'fake' mempool.
-        real_height = await self._send_single('getblockcount')
-        tip_hash = await self._send_single('getblockhash', (real_height,))
+        real_height = await self._send_rpc_single('getblockcount')
+        tip_hash = await self._send_rpc_single('getblockhash', (real_height,))
         tip = await self.deserialised_block(tip_hash)
         # Add normal transactions except coinbase
         mempool += tip['tx'][1:]
@@ -473,22 +558,22 @@ class PreLegacyRPCDaemon(LegacyRPCDaemon):
 
     async def deserialised_block(self, hex_hash):
         '''Return the deserialised block with the given hex hash.'''
-        return await self._send_single('getblock', (hex_hash, False))
+        return await self._send_rpc_single('getblock', (hex_hash, False))
 
 
 class SmartCashDaemon(Daemon):
 
     async def masternode_broadcast(self, params):
         '''Broadcast a smartnode to the network.'''
-        return await self._send_single('smartnodebroadcast', params)
+        return await self._send_rpc_single('smartnodebroadcast', params)
 
     async def masternode_list(self, params):
         '''Return the smartnode status.'''
-        return await self._send_single('smartnodelist', params)
+        return await self._send_rpc_single('smartnodelist', params)
 
     async def smartrewards(self, params):
         '''Return smartrewards data.'''
-        return await self._send_single('smartrewards', params)
+        return await self._send_rpc_single('smartrewards', params)
 
 
 class ZcoinMtpDaemon(Daemon):
@@ -503,18 +588,18 @@ class ZcoinMtpDaemon(Daemon):
     async def raw_blocks(self, hex_hashes):
         '''Return the raw binary blocks with the given hex hashes.'''
         params_iterable = ((h, False) for h in hex_hashes)
-        blocks = await self._send_vector('getblock', params_iterable)
+        blocks = await self._send_rpc_vector('getblock', params_iterable)
         # Convert hex string to bytes
         return [hex_to_bytes(self.strip_mtp_data(block)) for block in blocks]
 
     async def masternode_broadcast(self, params):
         '''Broadcast a transaction to the network.'''
-        return await self._send_single('znodebroadcast', params)
+        return await self._send_rpc_single('znodebroadcast', params)
 
     async def masternode_list(self, params):
         '''Return the masternode status.'''
-        return await self._send_single('znodelist', params)
+        return await self._send_rpc_single('znodelist', params)
 
     async def protx(self, params):
         '''Set of commands to execute ProTx related actions.'''
-        return await self._send_single('protx', params)
+        return await self._send_rpc_single('protx', params)
