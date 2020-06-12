@@ -28,7 +28,9 @@
 '''Transaction-related classes and functions.'''
 
 from collections import namedtuple
+from dataclasses import dataclass
 from hashlib import blake2s
+from typing import Sequence
 
 from electrumx.lib.hash import sha256, double_sha256, hash_to_hex_str
 from electrumx.lib.script import OpCodes
@@ -43,8 +45,14 @@ ZERO = bytes(32)
 MINUS_1 = 4294967295
 
 
-class Tx(namedtuple("Tx", "version inputs outputs locktime")):
+@dataclass
+class Tx:
     '''Class representing a transaction.'''
+    __slots__ = 'version', 'inputs', 'outputs', 'locktime'
+    version: int
+    inputs: Sequence
+    outputs: Sequence
+    locktime: int
 
     def serialize(self):
         return b''.join((
@@ -57,8 +65,15 @@ class Tx(namedtuple("Tx", "version inputs outputs locktime")):
         ))
 
 
-class TxInput(namedtuple("TxInput", "prev_hash prev_idx script sequence")):
+@dataclass
+class TxInput:
     '''Class representing a transaction input.'''
+    __slots__ = 'prev_hash', 'prev_idx', 'script', 'sequence'
+    prev_hash: bytes
+    prev_idx: int
+    script: bytes
+    sequence: int
+
     def __str__(self):
         script = self.script.hex()
         prev_hash = hash_to_hex_str(self.prev_hash)
@@ -78,7 +93,11 @@ class TxInput(namedtuple("TxInput", "prev_hash prev_idx script sequence")):
         ))
 
 
-class TxOutput(namedtuple("TxOutput", "value pk_script")):
+@dataclass
+class TxOutput:
+    __slots__ = 'value', 'pk_script'
+    value: int
+    pk_script: bytes
 
     def serialize(self):
         return b''.join((
@@ -211,9 +230,18 @@ class Deserializer(object):
         return result
 
 
-class TxSegWit(namedtuple("Tx", "version marker flag inputs outputs "
-                          "witness locktime")):
+@dataclass
+class TxSegWit:
     '''Class representing a SegWit transaction.'''
+    __slots__ = ('version', 'marker', 'flag', 'inputs', 'outputs', 'witness',
+                 'locktime')
+    version: int
+    marker: int
+    flag: int
+    inputs: Sequence
+    outputs: Sequence
+    witness: Sequence
+    locktime: int
 
 
 class DeserializerSegWit(Deserializer):
