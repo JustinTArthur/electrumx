@@ -41,7 +41,7 @@ import electrumx.lib.util as util
 from electrumx.lib.hash import Base58, double_sha256, hash_to_hex_str
 from electrumx.lib.hash import HASHX_LEN, hex_str_to_hash
 from electrumx.lib.script import (_match_ops, Script, ScriptError,
-                                  ScriptPubKey, OpCodes)
+                                  ScriptPubKey, OpCode)
 import electrumx.lib.tx as lib_tx
 import electrumx.lib.tx_dash as lib_tx_dash
 import electrumx.lib.tx_axe as lib_tx_axe
@@ -402,8 +402,8 @@ class NameMixin:
         num_2drop = num_dp // 2
         num_drop = num_dp % 2
 
-        two_drops = [OpCodes.OP_2DROP] * num_2drop
-        one_drops = [OpCodes.OP_DROP] * num_drop
+        two_drops = [OpCode.OP_2DROP] * num_2drop
+        one_drops = [OpCode.OP_DROP] * num_drop
 
         elements_added = num_dp + num_2drop + num_drop
         placeholders = [-1] * num_dp
@@ -435,14 +435,14 @@ class NameMixin:
             op = script[n]
             n += 1
 
-            if op <= OpCodes.OP_PUSHDATA4:
+            if op <= OpCode.OP_PUSHDATA4:
                 # Raw bytes follow
-                if op < OpCodes.OP_PUSHDATA1:
+                if op < OpCode.OP_PUSHDATA1:
                     dlen = op
-                elif op == OpCodes.OP_PUSHDATA1:
+                elif op == OpCode.OP_PUSHDATA1:
                     dlen = script[n]
                     n += 1
-                elif op == OpCodes.OP_PUSHDATA2:
+                elif op == OpCode.OP_PUSHDATA2:
                     dlen, = struct.unpack('<H', script[n: n + 2])
                     n += 2
                 else:
@@ -473,9 +473,9 @@ class NameIndexMixin(NameMixin):
         res.append(cls.OP_NAME_UPDATE)
         res += Script.push_data(name)
         res += Script.push_data(b'')
-        res.append(OpCodes.OP_2DROP)
-        res.append(OpCodes.OP_DROP)
-        res.append(OpCodes.OP_RETURN)
+        res.append(OpCode.OP_2DROP)
+        res.append(OpCode.OP_DROP)
+        res.append(OpCode.OP_RETURN)
 
         return bytes(res)
 
@@ -717,17 +717,17 @@ class Emercoin(NameMixin, Coin):
     PEERS = []
 
     # Name opcodes
-    OP_NAME_NEW = OpCodes.OP_1
-    OP_NAME_UPDATE = OpCodes.OP_2
-    OP_NAME_DELETE = OpCodes.OP_3
+    OP_NAME_NEW = OpCode.OP_1
+    OP_NAME_UPDATE = OpCode.OP_2
+    OP_NAME_DELETE = OpCode.OP_3
 
     # Valid name prefixes.
-    NAME_NEW_OPS = (OP_NAME_NEW, OpCodes.OP_DROP, "name", "days",
-                    OpCodes.OP_2DROP, NameMixin.DATA_PUSH_MULTIPLE)
-    NAME_UPDATE_OPS = (OP_NAME_UPDATE, OpCodes.OP_DROP, "name", "days",
-                       OpCodes.OP_2DROP, NameMixin.DATA_PUSH_MULTIPLE)
-    NAME_DELETE_OPS = (OP_NAME_DELETE, OpCodes.OP_DROP, "name",
-                       OpCodes.OP_DROP)
+    NAME_NEW_OPS = (OP_NAME_NEW, OpCode.OP_DROP, "name", "days",
+                    OpCode.OP_2DROP, NameMixin.DATA_PUSH_MULTIPLE)
+    NAME_UPDATE_OPS = (OP_NAME_UPDATE, OpCode.OP_DROP, "name", "days",
+                       OpCode.OP_2DROP, NameMixin.DATA_PUSH_MULTIPLE)
+    NAME_DELETE_OPS = (OP_NAME_DELETE, OpCode.OP_DROP, "name",
+                       OpCode.OP_DROP)
     NAME_OPERATIONS = (
         NAME_NEW_OPS,
         NAME_UPDATE_OPS,
@@ -1113,16 +1113,16 @@ class Namecoin(NameIndexMixin, AuxPowMixin, Coin):
     BLOCK_PROCESSOR = block_proc.NameIndexBlockProcessor
 
     # Name opcodes
-    OP_NAME_NEW = OpCodes.OP_1
-    OP_NAME_FIRSTUPDATE = OpCodes.OP_2
-    OP_NAME_UPDATE = OpCodes.OP_3
+    OP_NAME_NEW = OpCode.OP_1
+    OP_NAME_FIRSTUPDATE = OpCode.OP_2
+    OP_NAME_UPDATE = OpCode.OP_3
 
     # Valid name prefixes.
-    NAME_NEW_OPS = [OP_NAME_NEW, -1, OpCodes.OP_2DROP]
+    NAME_NEW_OPS = [OP_NAME_NEW, -1, OpCode.OP_2DROP]
     NAME_FIRSTUPDATE_OPS = [OP_NAME_FIRSTUPDATE, "name", -1, -1,
-                            OpCodes.OP_2DROP, OpCodes.OP_2DROP]
-    NAME_UPDATE_OPS = [OP_NAME_UPDATE, "name", -1, OpCodes.OP_2DROP,
-                       OpCodes.OP_DROP]
+                            OpCode.OP_2DROP, OpCode.OP_2DROP]
+    NAME_UPDATE_OPS = [OP_NAME_UPDATE, "name", -1, OpCode.OP_2DROP,
+                       OpCode.OP_DROP]
     NAME_OPERATIONS = (
         NAME_NEW_OPS,
         NAME_FIRSTUPDATE_OPS,
@@ -3300,14 +3300,14 @@ class Xaya(NameIndexMixin, AuxPowMixin, Coin):
     ]
 
     # Op-codes for name operations
-    OP_NAME_REGISTER = OpCodes.OP_1
-    OP_NAME_UPDATE = OpCodes.OP_2
+    OP_NAME_REGISTER = OpCode.OP_1
+    OP_NAME_UPDATE = OpCode.OP_2
 
     # Valid name prefixes.
-    NAME_REGISTER_OPS = [OP_NAME_REGISTER, "name", -1, OpCodes.OP_2DROP,
-                         OpCodes.OP_DROP]
-    NAME_UPDATE_OPS = [OP_NAME_UPDATE, "name", -1, OpCodes.OP_2DROP,
-                       OpCodes.OP_DROP]
+    NAME_REGISTER_OPS = [OP_NAME_REGISTER, "name", -1, OpCode.OP_2DROP,
+                         OpCode.OP_DROP]
+    NAME_UPDATE_OPS = [OP_NAME_UPDATE, "name", -1, OpCode.OP_2DROP,
+                       OpCode.OP_DROP]
     NAME_OPERATIONS = (
         NAME_REGISTER_OPS,
         NAME_UPDATE_OPS,

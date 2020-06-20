@@ -3,7 +3,7 @@
 import pytest
 
 from electrumx.lib.coins import NameMixin
-from electrumx.lib.script import OpCodes, Script
+from electrumx.lib.script import OpCode, Script
 
 
 NAME = "name".encode("ascii")
@@ -11,17 +11,17 @@ DAYS = hex(6).encode("ascii")
 VALUE = "value".encode("ascii")
 ADDRESS_SCRIPT = "address_script".encode("ascii")
 
-OP_NAME_NEW = OpCodes.OP_1
-OP_NAME_UPDATE = OpCodes.OP_2
-OP_DROP = OpCodes.OP_DROP
-OP_2DROP = OpCodes.OP_2DROP
+OP_NAME_NEW = OpCode.OP_1
+OP_NAME_UPDATE = OpCode.OP_2
+OP_DROP = OpCode.OP_DROP
+OP_2DROP = OpCode.OP_2DROP
 DP_MULT = NameMixin.DATA_PUSH_MULTIPLE
 
 
 def create_script(pattern, address_script):
     script = bytearray()
     for item in pattern:
-        if type(item) == int:
+        if isinstance(item, (int, OpCode)):
             script.append(item)
         else:
             script.extend(Script.push_data(item))

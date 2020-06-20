@@ -32,7 +32,7 @@ from hashlib import blake2s
 from typing import Sequence
 
 from electrumx.lib.hash import sha256, double_sha256, hash_to_hex_str
-from electrumx.lib.script import OpCodes
+from electrumx.lib.script import OpCode
 from electrumx.lib.util import (
     unpack_le_int32_from, unpack_le_int64_from, unpack_le_uint16_from,
     unpack_be_uint16_from,
@@ -718,7 +718,7 @@ class TxInputTokenPay(TxInput):
 
     def _is_anon_input(self):
         return (len(self.script) >= self.MIN_ANON_IN_SIZE and
-                self.script[0] == OpCodes.OP_RETURN and
+                self.script[0] == OpCode.OP_RETURN and
                 self.script[1] == self.OP_ANON_MARKER)
 
     def is_generation(self):
